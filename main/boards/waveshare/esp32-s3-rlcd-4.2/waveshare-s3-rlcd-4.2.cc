@@ -12,6 +12,8 @@
 #include "mcp_server.h"
 #include "lvgl.h"
 #include "custom_lcd_display.h"
+#include "shtc3.h"
+#include <cstdio>
 
 #define TAG "waveshare_rlcd_4_2"
 
@@ -23,6 +25,7 @@ private:
     adc_oneshot_unit_handle_t adc1_handle;
     adc_cali_handle_t cali_handle;
     bool vbat_status = 0;
+    Shtc3* shtc3_ = nullptr;
 
     void InitializeI2c() {
         i2c_master_bus_config_t i2c_bus_cfg = {};
@@ -64,6 +67,36 @@ private:
             EnterWifiConfigMode();
             return true;
         });
+
+        // ── 新增：读取环境温湿度（SHTC3）──────────────────────────────
+        mcp_server.AddTool("self.sensor.th",
+            "读取当前环境的温度和相对湿度。用户问“多少度”“湿度多少”“闷不闷”时调用。",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                if (shtc3_ == nullptr || !shtc3_->IsReady()) {
+                    return std::string("温湿度传感器不可用");
+                }
+                float t = 0.0f;
+                float h = 0.0f;
+                if (!shtc3_->Read(t, h)) {
+                    return std::string("温湿度读取失败，请稍后再试");
+                }
+                char buf[96];
+                snprintf(buf, sizeof(buf), "温度 %.1f℃，相对湿度 %.0f%%", t, h);
+                return std::string(buf);
+            });
+
+        // ── 新增：读取电池电量 ────────────────────────────────────────
+        mcp_server.AddTool("self.battery.status",
+            "读取设备电池电量百分比和电压。用户问“还有多少电”“电量多少”时调用。",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                int mv = (int)BatterygetVoltage();
+                int pct = (int)BatterygetPercent();
+                char buf[96];
+                snprintf(buf, sizeof(buf), "电池电量 %d%%，电压 %d mV", pct, mv);
+                return std::string(buf);
+            });
     }
 
     void InitializeLcdDisplay() {
@@ -132,6 +165,7 @@ private:
 public:
     CustomBoard() : boot_button_(BOOT_BUTTON_GPIO) {    
         InitializeI2c();  
+        shtc3_ = new Shtc3(i2c_bus_);      // 新增：挂在同一条 I2C 总线上
         InitializeButtons();     
         InitializeTools();
         InitializeLcdDisplay();
